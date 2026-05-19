@@ -197,8 +197,8 @@
       </div>
 
       <div class="field">
-        <label for="promptFile">Prompt file</label>
-        <input id="promptFile" type="file" accept=".txt,.csv,text/plain,text/csv">
+        <label for="promptFile">Prompt or image file</label>
+        <input id="promptFile" type="file" accept=".txt,.csv,.jpg,.jpeg,.png,text/plain,text/csv,image/jpeg,image/png">
       </div>
 
       <div class="field">
@@ -245,6 +245,8 @@
     const resultsArea = document.getElementById("results");
 
     let results = [];
+    const IMAGE_EXTRACTION_PROMPT = "Extract all readable text from this image. Preserve line breaks where helpful and return only the extracted text.";
+
     runButton.addEventListener("click", runBatch);
     downloadButton.addEventListener("click", downloadCsv);
 
@@ -255,6 +257,19 @@
         reader.onerror = () => reject(new Error("Could not read the selected file."));
         reader.readAsText(file);
       });
+    }
+
+    function readFileAsDataUrl(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(new Error("Could not read the selected image."));
+        reader.readAsDataURL(file);
+      });
+    }
+
+    function isImageFile(file) {
+      return file.type.startsWith("image/") || /\.(jpe?g|png)$/i.test(file.name);
     }
 
     function splitPromptLines(text) {
@@ -280,7 +295,7 @@
       csvLink.removeAttribute("href");
 
       if (!file) {
-        setStatus("Choose a .txt or .csv file first.", "error");
+        setStatus("Choose a .txt, .csv, .jpg, .jpeg, or .png file first.", "error");
         return;
       }
 
@@ -302,6 +317,26 @@
       systemPromptInput.disabled = true;
 
       try {
+        if (isImageFile(file)) {
+          setStatus(`Extracting text from ${file.name}...`);
+          const imageDataUrl = await readFileAsDataUrl(file);
+          const response = await callChatCompletion(
+            apiUrl,
+            apiKey,
+            model,
+            systemPromptInput.value,
+            IMAGE_EXTRACTION_PROMPT,
+            imageDataUrl
+          );
+          const result = { row_number: 1, input: file.name, response };
+
+          results.push(result);
+          appendResult(result);
+          setStatus("Done. Extracted text from 1 image.", "success");
+          downloadButton.style.display = "inline-block";
+          return;
+        }
+
         const fileText = await readFileAsText(file);
         const prompts = splitPromptLines(fileText);
 
@@ -335,7 +370,7 @@
       }
     }
 
-    async function callChatCompletion(apiUrl, apiKey, model, systemPrompt, userPrompt) {
+    async function callChatCompletion(apiUrl, apiKey, model, systemPrompt, userPrompt, imageDataUrl) {
       try {
         const headers = {
           "Content-Type": "application/json"
@@ -355,7 +390,15 @@
             model,
             messages: [
               { role: "system", content: systemPrompt },
-              { role: "user", content: userPrompt }
+              {
+                role: "user",
+                content: imageDataUrl
+                  ? [
+                      { type: "text", text: userPrompt },
+                      { type: "image_url", image_url: { url: imageDataUrl } }
+                    ]
+                  : userPrompt
+              }
             ]
           })
         });
