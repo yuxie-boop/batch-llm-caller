@@ -1,13 +1,16 @@
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from http.client import RemoteDisconnected
+import ssl
 from urllib.parse import parse_qs, urlparse
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
+import certifi
 
-LM_STUDIO_ENDPOINT = "http://127.0.0.1:1234/v1/chat/completions"
+
 DOWNLOADS = {}
+SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 
 
 class BatchCallerHandler(SimpleHTTPRequestHandler):
@@ -45,21 +48,31 @@ class BatchCallerHandler(SimpleHTTPRequestHandler):
             self.wfile.write(response_body)
             return
 
-        if self.path != "/v1/chat/completions":
+        if self.path != "/proxy-chat-completions":
             self.send_error(404, "Not found")
             return
 
         content_length = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(content_length)
+        api_url = self.headers.get("X-API-URL", "").strip()
+        if not api_url:
+            self.send_error(400, "Missing API URL")
+            return
+
+        headers = {"Content-Type": "application/json"}
+        authorization = self.headers.get("Authorization", "").strip()
+        if authorization:
+            headers["Authorization"] = authorization
+
         request = Request(
-            LM_STUDIO_ENDPOINT,
+            api_url,
             data=body,
-            headers={"Content-Type": "application/json"},
+            headers=headers,
             method="POST",
         )
 
         try:
-            with urlopen(request, timeout=300) as response:
+            with urlopen(request, timeout=300, context=SSL_CONTEXT) as response:
                 response_body = response.read()
                 self.send_response(response.status)
                 self.send_header("Content-Type", response.headers.get("Content-Type", "application/json"))
@@ -74,14 +87,14 @@ class BatchCallerHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(error_body)
         except URLError as error:
-            message = f'{{"error":"Could not reach LM Studio: {error.reason}"}}'.encode("utf-8")
+            message = f'{{"error":"Could not reach API endpoint: {error.reason}"}}'.encode("utf-8")
             self.send_response(502)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(message)))
             self.end_headers()
             self.wfile.write(message)
         except RemoteDisconnected:
-            message = b'{"error":"LM Studio closed the connection before returning a response."}'
+            message = b'{"error":"API endpoint closed the connection before returning a response."}'
             self.send_response(502)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(message)))

@@ -64,13 +64,15 @@
 
     textarea,
     input[type="text"],
+    input[type="password"],
     input[type="file"] {
       width: 100%;
       font: inherit;
     }
 
     textarea,
-    input[type="text"] {
+    input[type="text"],
+    input[type="password"] {
       border: 1px solid var(--border);
       border-radius: 6px;
       padding: 11px 12px;
@@ -84,7 +86,8 @@
     }
 
     textarea:focus,
-    input[type="text"]:focus {
+    input[type="text"]:focus,
+    input[type="password"]:focus {
       border-color: var(--accent);
       outline: 3px solid rgba(23, 105, 224, 0.15);
     }
@@ -199,8 +202,18 @@
       </div>
 
       <div class="field">
+        <label for="apiUrl">API URL</label>
+        <input id="apiUrl" type="text" value="http://localhost:1234/v1/chat/completions">
+      </div>
+
+      <div class="field">
+        <label for="apiKey">API Key</label>
+        <input id="apiKey" type="password" value="">
+      </div>
+
+      <div class="field">
         <label for="modelName">Model name</label>
-        <input id="modelName" type="text" value="qwen3.5-0.8b-mlx">
+        <input id="modelName" type="text" value="qwen3.5-0.8b-mlx" placeholder="qwen3.5-0.8b (LM Studio), gemini-2.5-flash (Google AI Studio), meta-llama/llama-3.3-70b-instruct:free (OpenRouter)">
       </div>
 
       <div class="actions">
@@ -220,10 +233,10 @@
       location.replace("http://127.0.0.1:8000/index.html");
     }
 
-    const endpoint = "/v1/chat/completions";
-
     const systemPromptInput = document.getElementById("systemPrompt");
     const promptFileInput = document.getElementById("promptFile");
+    const apiUrlInput = document.getElementById("apiUrl");
+    const apiKeyInput = document.getElementById("apiKey");
     const modelNameInput = document.getElementById("modelName");
     const runButton = document.getElementById("runButton");
     const downloadButton = document.getElementById("downloadButton");
@@ -255,6 +268,8 @@
 
     async function runBatch() {
       const file = promptFileInput.files[0];
+      const apiUrl = apiUrlInput.value.trim();
+      const apiKey = apiKeyInput.value.trim();
       const model = modelNameInput.value.trim();
 
       clearStatus();
@@ -274,8 +289,15 @@
         return;
       }
 
+      if (!apiUrl) {
+        setStatus("Enter an API URL before running.", "error");
+        return;
+      }
+
       runButton.disabled = true;
       promptFileInput.disabled = true;
+      apiUrlInput.disabled = true;
+      apiKeyInput.disabled = true;
       modelNameInput.disabled = true;
       systemPromptInput.disabled = true;
 
@@ -293,7 +315,7 @@
           const input = prompts[index];
           setStatus(`Processing ${rowNumber} of ${prompts.length}...`);
 
-          const response = await callChatCompletion(model, systemPromptInput.value, input);
+          const response = await callChatCompletion(apiUrl, apiKey, model, systemPromptInput.value, input);
           const result = { row_number: rowNumber, input, response };
           results.push(result);
           appendResult(result);
@@ -306,17 +328,28 @@
       } finally {
         runButton.disabled = false;
         promptFileInput.disabled = false;
+        apiUrlInput.disabled = false;
+        apiKeyInput.disabled = false;
         modelNameInput.disabled = false;
         systemPromptInput.disabled = false;
       }
     }
 
-    async function callChatCompletion(model, systemPrompt, userPrompt) {
+    async function callChatCompletion(apiUrl, apiKey, model, systemPrompt, userPrompt) {
       try {
-        const response = await fetch(endpoint, {
+        const headers = {
+          "Content-Type": "application/json"
+        };
+
+        if (apiKey) {
+          headers.Authorization = `Bearer ${apiKey}`;
+        }
+
+        const response = await fetch("/proxy-chat-completions", {
           method: "POST",
           headers: {
-            "Content-Type": "application/json"
+            ...headers,
+            "X-API-URL": apiUrl
           },
           body: JSON.stringify({
             model,
