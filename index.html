@@ -203,7 +203,7 @@
 
       <div class="field">
         <label for="apiUrl">API URL</label>
-        <input id="apiUrl" type="text" value="http://localhost:1234/v1/chat/completions">
+        <input id="apiUrl" type="text" value="https://openrouter.ai/api/v1/chat/completions">
       </div>
 
       <div class="field">
@@ -270,6 +270,19 @@
 
     function isImageFile(file) {
       return file.type.startsWith("image/") || /\.(jpe?g|png)$/i.test(file.name);
+    }
+
+    function shouldUseLocalProxy(apiUrl) {
+      const localPage = ["localhost", "127.0.0.1"].includes(location.hostname);
+      return localPage && /^https?:\/\//i.test(apiUrl);
+    }
+
+    function isOpenRouterUrl(apiUrl) {
+      try {
+        return new URL(apiUrl).hostname.endsWith("openrouter.ai");
+      } catch {
+        return false;
+      }
     }
 
     function splitPromptLines(text) {
@@ -380,12 +393,22 @@
           headers.Authorization = `Bearer ${apiKey}`;
         }
 
-        const response = await fetch("/proxy-chat-completions", {
+        const useLocalProxy = shouldUseLocalProxy(apiUrl);
+        const requestUrl = useLocalProxy ? "/proxy-chat-completions" : apiUrl;
+        const requestHeaders = {
+          ...headers
+        };
+
+        if (useLocalProxy) {
+          requestHeaders["X-API-URL"] = apiUrl;
+        } else if (isOpenRouterUrl(apiUrl)) {
+          requestHeaders["HTTP-Referer"] = location.origin;
+          requestHeaders["X-Title"] = "LLM batch caller";
+        }
+
+        const response = await fetch(requestUrl, {
           method: "POST",
-          headers: {
-            ...headers,
-            "X-API-URL": apiUrl
-          },
+          headers: requestHeaders,
           body: JSON.stringify({
             model,
             messages: [
@@ -414,8 +437,9 @@
         if (error instanceof TypeError && error.message === "Failed to fetch") {
           return [
             "Error: Failed to fetch.",
-            "The browser could not connect to LM Studio from this page.",
-            "Make sure server.py and the LM Studio server are both running, then open http://127.0.0.1:8000/index.html."
+            "The browser could not reach the API endpoint from this page.",
+            "For OpenRouter, use https://openrouter.ai/api/v1/chat/completions and a valid OpenRouter API key.",
+            "For LM Studio, run server.py locally and open http://127.0.0.1:8000/index.html."
           ].join(" ");
         }
 
@@ -473,6 +497,24 @@
         .join("\r\n");
 
       try {
+        if (!["localhost", "127.0.0.1"].includes(location.hostname)) {
+          const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
+          const downloadUrl = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+
+          link.href = downloadUrl;
+          link.download = "results.csv";
+          link.style.display = "none";
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+
+          csvLink.href = downloadUrl;
+          csvLink.style.display = "inline-block";
+          setStatus("CSV is ready. If the download did not start, use the Open CSV link.", "success");
+          return;
+        }
+
         const response = await fetch("/save-csv", {
           method: "POST",
           headers: {
